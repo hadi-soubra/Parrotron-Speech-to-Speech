@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Speak & Repeat</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --surface: #ffffff; --text: #1c1b19; --muted: #6b6860;
+    --border: #e3e0d8; --accent: #2f6f5e; --accent-text: #ffffff;
+    --rec: #c0392b; --error-bg: #fbeaea; --error-text: #8a1f17;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161614; --surface: #201f1c; --text: #ecebe6; --muted: #9c998f;
+      --border: #34322d; --accent: #5fb39c; --accent-text: #0e1a16;
+      --rec: #e0645a; --error-bg: #3a1f1c; --error-text: #f2b6b0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 640px; margin: 0 auto; padding: 48px 16px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 32px; }
+  .modes { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 32px; }
+  .modes label {
+    flex: 1 1 200px; border: 1px solid var(--border); background: var(--surface);
+    border-radius: 10px; padding: 12px 14px; cursor: pointer;
+  }
+  .modes label:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .modes label:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+  .modes input { margin: 0 8px 0 0; accent-color: var(--accent); }
+  .modes small { display: block; color: var(--muted); margin-left: 24px; }
+  .recorder { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-bottom: 32px; }
+  #mic {
+    width: 112px; height: 112px; border-radius: 50%; border: none; cursor: pointer;
+    background: var(--accent); color: var(--accent-text);
+    display: grid; place-items: center; transition: transform .1s, background .2s;
+  }
+  #mic:hover { transform: scale(1.04); }
+  #mic:disabled { opacity: .5; cursor: wait; transform: none; }
+  #mic.recording { background: var(--rec); animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--rec) 45%, transparent); }
+                     50% { box-shadow: 0 0 0 16px transparent; } }
+  #status { color: var(--muted); min-height: 1.5em; text-align: center; }
+  .upload { color: var(--muted); font-size: .9rem; }
+  .upload button { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; padding: 0; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .card h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
+  textarea {
+    width: 100%; min-height: 96px; resize: vertical; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font: inherit; padding: 10px;
+  }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .btn {
+    border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    border-radius: 8px; padding: 8px 14px; font: inherit; cursor: pointer; text-decoration: none;
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  audio { width: 100%; }
+  .error { background: var(--error-bg); color: var(--error-text); border-radius: 8px; padding: 10px 12px; margin-bottom: 16px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Speak &amp; Repeat</h1>
+  <p class="sub">Say something. It comes back as text and in a clear synthetic voice.</p>
+
+  <div class="modes">
+    <label><input type="radio" name="mode" value="asr" checked>Transcribe + TTS
+      <small>Whisper turns speech into text, then Piper reads it out</small></label>
+    <label id="parrotron-option"><input type="radio" name="mode" value="parrotron" disabled>Parrotron (direct)
+      <small id="parrotron-note">Needs a trained checkpoint</small></label>
+  </div>
+
+  <div class="recorder">
+    <button id="mic" aria-label="Start recording">
+      <svg id="mic-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg>
+      <svg id="stop-icon" hidden width="36" height="36" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+    </button>
+    <div id="status">Tap to record</div>
+    <div class="upload">or <button id="upload-btn">upload an audio file</button>
+      <input id="file" type="file" accept="audio/*" hidden></div>
+  </div>
+
+  <div id="error" class="error" hidden></div>
+
+  <section id="transcript-card" class="card" hidden>
+    <h2>Transcript</h2>
+    <textarea id="transcript" placeholder="Transcript appears here. You can edit it."></textarea>
+    <div class="row">
+      <button id="speak" class="btn primary">Speak this text</button>
+      <button id="copy" class="btn">Copy</button>
+    </div>
+  </section>
+
+  <section id="audio-card" class="card" hidden>
+    <h2>Output voice</h2>
+    <audio id="player" controls></audio>
+    <div class="row"><a id="download" class="btn" download="output.wav">Download .wav</a></div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const mic = $('mic');
+let recorder = null, chunks = [], audioUrl = null;
+
+function setStatus(text) { $('status').textContent = text; }
+function showError(message) { $('error').textContent = message; $('error').hidden = !message; }
+function mode() { return document.querySelector('input[name=mode]:checked').value; }
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail || detail; } catch {}
+    throw new Error(detail);
+  }
+  return res;
+}
+
+function playAudio(blob) {
+  if (audioUrl) URL.revokeObjectURL(audioUrl);
+  audioUrl = URL.createObjectURL(blob);
+  $('player').src = audioUrl;
+  $('download').href = audioUrl;
+  $('audio-card').hidden = false;
+  $('player').play().catch(() => {});
+}
+
+async function speak(text) {
+  setStatus('Generating voice…');
+  const res = await api('/api/tts', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
+  });
+  playAudio(await res.blob());
+}
+
+async function process(blob, filename) {
+  showError('');
+  mic.disabled = true;
+  const form = new FormData();
+  form.append('audio', blob, filename);
+  try {
+    if (mode() === 'parrotron') {
+      setStatus('Converting with Parrotron…');
+      const res = await api('/api/parrotron', { method: 'POST', body: form });
+      playAudio(await res.blob());
+    } else {
+      setStatus('Transcribing…');
+      const { text } = await (await api('/api/transcribe', { method: 'POST', body: form })).json();
+      $('transcript').value = text;
+      $('transcript-card').hidden = false;
+      if (text.trim()) await speak(text);
+      else showError('No speech detected. Try again a little closer to the mic.');
+    }
+    setStatus('Tap to record');
+  } catch (err) {
+    showError(err.message);
+    setStatus('Tap to record');
+  } finally {
+    mic.disabled = false;
+  }
+}
+
+async function startRecording() {
+  showError('');
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    showError('Microphone access was blocked. Allow it in the browser and try again.');
+    return;
+  }
+  chunks = [];
+  recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  recorder.onstop = () => {
+    stream.getTracks().forEach((t) => t.stop());
+    process(new Blob(chunks, { type: recorder.mimeType }), 'recording.webm');
+  };
+  recorder.start();
+  mic.classList.add('recording');
+  mic.setAttribute('aria-label', 'Stop recording');
+  $('mic-icon').hidden = true; $('stop-icon').hidden = false;
+  setStatus('Listening… tap to stop');
+}
+
+function stopRecording() {
+  recorder.stop();
+  mic.classList.remove('recording');
+  mic.setAttribute('aria-label', 'Start recording');
+  $('mic-icon').hidden = false; $('stop-icon').hidden = true;
+}
+
+mic.onclick = () => (recorder && recorder.state === 'recording' ? stopRecording() : startRecording());
+$('upload-btn').onclick = () => $('file').click();
+$('file').onchange = (e) => { const f = e.target.files[0]; if (f) process(f, f.name); e.target.value = ''; };
+$('speak').onclick = async () => {
+  const text = $('transcript').value.trim();
+  if (!text) return;
+  showError('');
+  try { await speak(text); } catch (err) { showError(err.message); }
+  setStatus('Tap to record');
+};
+$('copy').onclick = async () => {
+  await navigator.clipboard.writeText($('transcript').value);
+  $('copy').textContent = 'Copied';
+  setTimeout(() => ($('copy').textContent = 'Copy'), 1200);
+};
+
+api('/api/status').then((r) => r.json()).then((s) => {
+  if (s.parrotron) {
+    document.querySelector('input[value=parrotron]').disabled = false;
+    $('parrotron-note').textContent = 'Speech → speech, no text in between';
+  }
+}).catch(() => showError('Cannot reach the server. Is server.py running?'));
+</script>
+</body>
+</html>
